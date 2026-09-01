@@ -10,9 +10,11 @@ Leave Request.
 1. Clone/download this repository inside XAMPP's `htdocs` folder.
 2. Start **Apache Web Server** and **MySQL Database** in XAMPP Manager.
 3. In phpMyAdmin, import `sql/employee_payroll_db.sql`.
-4. Copy `backend/config/database.example.php` to
-   `backend/config/database.php`.
-5. Open `http://localhost/employee-payroll/`.
+4. Open `http://localhost/employee-payroll/`.
+
+The default XAMPP connection settings work automatically through
+`backend/config/database.example.php`. If your MySQL credentials differ,
+copy that file to `backend/config/database.php` and edit the local copy.
 
 ## Demo accounts
 

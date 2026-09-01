@@ -2,7 +2,14 @@
 declare(strict_types=1);
 
 session_start();
-require_once __DIR__ . '/../config/database.php';
+
+// `database.php` is intentionally local-only. The tracked example enables a
+// fresh clone to work with the default XAMPP database settings immediately.
+$databaseConfig = __DIR__ . '/../config/database.php';
+if (!file_exists($databaseConfig)) {
+    $databaseConfig = __DIR__ . '/../config/database.example.php';
+}
+require_once $databaseConfig;
 
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 
