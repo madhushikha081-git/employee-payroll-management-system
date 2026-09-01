@@ -1,0 +1,10 @@
+# macOS and editor files
+.DS_Store
+.vscode/
+
+# Local-only database settings
+backend/config/database.php
+
+# Generated / temporary files
+*.log
+tmp/
