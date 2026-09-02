@@ -1,64 +1,137 @@
 <?php
-require_once __DIR__.'/../backend/includes/bootstrap.php'; require_once __DIR__.'/../backend/includes/layout.php';
-function q(mysqli $c,string $sql,...$args): mysqli_stmt {$s=$c->prepare($sql);if($args){$types='';foreach($args as $x)$types.=is_int($x)?'i':(is_float($x)?'d':'s');$bind=[$types];foreach($args as $k=>$_)$bind[]=&$args[$k];call_user_func_array([$s,'bind_param'],$bind);}$s->execute();return $s;}
-$page=$_GET['page']??'';$action=$_POST['action']??($_GET['action']??'');
+require_once __DIR__.'/../backend/includes/bootstrap.php';
+require_once __DIR__.'/../backend/includes/layout.php';
+function q(mysqli $c, string $sql, ...$args): mysqli_stmt {
+    $s=$c->prepare($sql);
+    if($args){
+        $types='';
+        foreach($args as $x)$types.=is_int($x)?'i':(is_float($x)?'d':'s');
+        $bind=[$types];
+        foreach($args as $k=>$_)$bind[]=&$args[$k];
+        call_user_func_array([$s, 'bind_param'], $bind);
+    }
+    $s->execute();
+    return $s;
+}
+$page=$_GET['page']??'';
+$action=$_POST['action']??($_GET['action']??'');
 try{
-if($action==='logout'){session_destroy();header('Location:index.php');exit;}
-if($action==='login'){$email=trim($_POST['email']);$password=$_POST['password'];$x=q($conn,'SELECT employee_id,first_name,last_name,email,role,password_hash,employment_status FROM employee WHERE email=?',$email)->get_result()->fetch_assoc();$demoAccounts=['ananya.sharma@company.com','rahul.verma@company.com'];$valid=$x&&password_verify($password,$x['password_hash']);if(!$valid&&$x&&$password==='password'&&in_array($email,$demoAccounts,true)){q($conn,'UPDATE employee SET password_hash=? WHERE employee_id=?',password_hash('password',PASSWORD_DEFAULT),(int)$x['employee_id']);$valid=true;}if($x&&$x['employment_status']==='ACTIVE'&&$valid){unset($x['password_hash']);$_SESSION['user']=$x;flash('Welcome, '.$x['first_name'].'!');header('Location:index.php?page='.($x['role']==='ADMIN'?'dashboard':'employee_dashboard'));exit;}flash('Invalid email, password, or inactive account.','danger');header('Location:index.php');exit;}
-if($action==='employee_save'){require_admin();$id=(int)($_POST['id']??0);$d=$_POST;if($id)q($conn,'UPDATE employee SET employee_code=?,first_name=?,last_name=?,email=?,phone=?,join_date=?,department_id=?,designation_id=?,role=?,employment_status=? WHERE employee_id=?',$d['code'],$d['first'],$d['last'],$d['email'],$d['phone'],$d['join'],(int)$d['department'],(int)$d['designation'],$d['role'],$d['status'],$id);else q($conn,'INSERT INTO employee(employee_code,first_name,last_name,email,phone,join_date,department_id,designation_id,password_hash,role,employment_status) VALUES(?,?,?,?,?,?,?,?,?,?,?)',$d['code'],$d['first'],$d['last'],$d['email'],$d['phone'],$d['join'],(int)$d['department'],(int)$d['designation'],password_hash($d['password']?:'password',PASSWORD_DEFAULT),$d['role'],$d['status']);flash($id?'Employee updated.':'Employee added. Default password: password');header('Location:index.php?page=employees');exit;}
-if ($action === 'employee_delete') {
-    require_admin();
-
-    $id = (int) $_POST['id'];
-
-    if ($id === (int) user()['employee_id']) {
-        throw new Exception('You cannot delete the account currently logged in as Admin.');
+    if($action==='logout'){
+        session_destroy();
+        header('Location:index.php');
+        exit;
     }
-
-    $conn->begin_transaction();
-
-    try {
-        q($conn, 'UPDATE department SET head_employee_id = NULL WHERE head_employee_id = ?', $id);
-        q($conn, 'UPDATE leave_request SET reviewed_by = NULL, reviewed_on = NULL WHERE reviewed_by = ?', $id);
-        q($conn, 'DELETE FROM payslip WHERE employee_id = ?', $id);
-        q($conn, 'DELETE FROM leave_request WHERE employee_id = ?', $id);
-        q($conn, 'DELETE FROM attendance WHERE employee_id = ?', $id);
-        q($conn, 'DELETE FROM salary_structure WHERE employee_id = ?', $id);
-        q($conn, 'DELETE FROM employee WHERE employee_id = ?', $id);
-
-        $conn->commit();
-    } catch (Throwable $e) {
-        $conn->rollback();
-        throw $e;
+    if($action==='login'){
+        $email=trim($_POST['email']);
+        $password=$_POST['password'];
+        $x=q($conn, 'SELECT employee_id,first_name,last_name,email,role,password_hash,employment_status FROM employee WHERE email=?', $email)->get_result()->fetch_assoc();
+        $demoAccounts=['ananya.sharma@company.com', 'rahul.verma@company.com'];
+        $valid=$x&&password_verify($password, $x['password_hash']);
+        if(!$valid&&$x&&$password==='password'&&in_array($email, $demoAccounts, true)){
+            q($conn, 'UPDATE employee SET password_hash=? WHERE employee_id=?', password_hash('password', PASSWORD_DEFAULT), (int)$x['employee_id']);
+            $valid=true;
+        }
+        if($x&&$x['employment_status']==='ACTIVE'&&$valid){
+            unset($x['password_hash']);
+            $_SESSION['user']=$x;
+            flash('Welcome, '.$x['first_name'].'!');
+            header('Location:index.php?page='.($x['role']==='ADMIN'?'dashboard':'employee_dashboard'));
+            exit;
+        }
+        flash('Invalid email, password, or inactive account.', 'danger');
+        header('Location:index.php');
+        exit;
     }
-
-    flash('Employee and related records deleted.');
-    header('Location:index.php?page=employees');
-    exit;
-}
-if($action==='master_save'){require_admin();if($_POST['kind']==='department')q($conn,'INSERT INTO department(department_name,department_location) VALUES(?,?)',trim($_POST['name']),trim($_POST['detail']));else q($conn,'INSERT INTO designation(designation_name,description) VALUES(?,?)',trim($_POST['name']),trim($_POST['detail']));flash('Master record added.');header('Location:index.php?page=masters');exit;}
-if($action==='attendance_save'){require_admin();q($conn,'INSERT INTO attendance(employee_id,attendance_date,attendance_status,check_in,check_out) VALUES(?,?,?,?,?) ON DUPLICATE KEY UPDATE attendance_status=VALUES(attendance_status),check_in=VALUES(check_in),check_out=VALUES(check_out)',(int)$_POST['employee_id'],$_POST['date'],$_POST['status'],$_POST['in']?:null,$_POST['out']?:null);flash('Attendance saved.');header('Location:index.php?page=attendance');exit;}
-if($action==='leave_submit'){require_login();$u=user();if($_POST['end']<$_POST['start'])throw new Exception('End date must be after start date.');q($conn,'INSERT INTO leave_request(employee_id,leave_type,start_date,end_date,reason) VALUES(?,?,?,?,?)',(int)$u['employee_id'],$_POST['type'],$_POST['start'],$_POST['end'],trim($_POST['reason']));flash('Leave request submitted.');header('Location:index.php?page=my_leaves');exit;}
-if($action==='leave_review'){require_admin();q($conn,'UPDATE leave_request SET leave_status=?,reviewed_by=?,reviewed_on=NOW() WHERE leave_id=? AND leave_status="PENDING"',$_POST['status'],(int)user()['employee_id'],(int)$_POST['leave_id']);flash('Leave request updated.');header('Location:index.php?page=leaves');exit;}
-if($action==='leave_cancel'){require_login();q($conn,"UPDATE leave_request SET leave_status='CANCELLED' WHERE leave_id=? AND employee_id=? AND leave_status='PENDING'",(int)$_POST['leave_id'],(int)user()['employee_id']);flash('Leave request cancelled.');header('Location:index.php?page=my_leaves');exit;}
-if($action==='salary_save'){require_admin();$d=$_POST;q($conn,'INSERT INTO salary_structure(employee_id,effective_from,effective_to,basic_salary,hra,travel_allowance,other_allowance,pf_deduction,tax_deduction) VALUES(?,?,?,?,?,?,?,?,?)',(int)$d['employee_id'],$d['from'],$d['to']?:null,(float)$d['basic'],(float)$d['hra'],(float)$d['travel'],(float)$d['other'],(float)$d['pf'],(float)$d['tax']);flash('Salary structure saved.');header('Location:index.php?page=salaries');exit;}
-if ($action === 'payslip_generate') {
-    require_admin();
-
-    $m = $_POST['month'] . '-01';
-    $id = (int) $_POST['employee_id'];
-    $alreadyExists = q(
-    $conn,
-    'SELECT 1 FROM payslip WHERE employee_id = ? AND pay_month = ? LIMIT 1',
-    $id,
-    $m
-)->get_result()->num_rows > 0;
-
-if ($alreadyExists) {
-    throw new Exception('A payslip has already been generated for this employee and month.');
-}
-
-    $sql = "
+    if($action==='employee_save'){
+        require_admin();
+        $id=(int)($_POST['id']??0);
+        $d=$_POST;
+        if($id)q($conn, 'UPDATE employee SET employee_code=?,first_name=?,last_name=?,email=?,phone=?,join_date=?,department_id=?,designation_id=?,role=?,employment_status=? WHERE employee_id=?', $d['code'], $d['first'], $d['last'], $d['email'], $d['phone'], $d['join'], (int)$d['department'], (int)$d['designation'], $d['role'], $d['status'], $id);
+        else q($conn, 'INSERT INTO employee(employee_code,first_name,last_name,email,phone,join_date,department_id,designation_id,password_hash,role,employment_status) VALUES(?,?,?,?,?,?,?,?,?,?,?)', $d['code'], $d['first'], $d['last'], $d['email'], $d['phone'], $d['join'], (int)$d['department'], (int)$d['designation'], password_hash($d['password']?:'password', PASSWORD_DEFAULT), $d['role'], $d['status']);
+        flash($id?'Employee updated.':'Employee added. Default password: password');
+        header('Location:index.php?page=employees');
+        exit;
+    }
+    if ($action === 'employee_delete') {
+        require_admin();
+        $id = (int) $_POST['id'];
+        if ($id === (int) user()['employee_id']) {
+            throw new Exception('You cannot delete the account currently logged in as Admin.');
+        }
+        $conn->begin_transaction();
+        try {
+            q($conn, 'UPDATE department SET head_employee_id = NULL WHERE head_employee_id = ?', $id);
+            q($conn, 'UPDATE leave_request SET reviewed_by = NULL, reviewed_on = NULL WHERE reviewed_by = ?', $id);
+            q($conn, 'DELETE FROM payslip WHERE employee_id = ?', $id);
+            q($conn, 'DELETE FROM leave_request WHERE employee_id = ?', $id);
+            q($conn, 'DELETE FROM attendance WHERE employee_id = ?', $id);
+            q($conn, 'DELETE FROM salary_structure WHERE employee_id = ?', $id);
+            q($conn, 'DELETE FROM employee WHERE employee_id = ?', $id);
+            $conn->commit();
+        }
+        catch (Throwable $e) {
+            $conn->rollback();
+            throw $e;
+        }
+        flash('Employee and related records deleted.');
+        header('Location:index.php?page=employees');
+        exit;
+    }
+    if($action==='master_save'){
+        require_admin();
+        if($_POST['kind']==='department')q($conn, 'INSERT INTO department(department_name,department_location) VALUES(?,?)', trim($_POST['name']), trim($_POST['detail']));
+        else q($conn, 'INSERT INTO designation(designation_name,description) VALUES(?,?)', trim($_POST['name']), trim($_POST['detail']));
+        flash('Master record added.');
+        header('Location:index.php?page=masters');
+        exit;
+    }
+    if($action==='attendance_save'){
+        require_admin();
+        q($conn, 'INSERT INTO attendance(employee_id,attendance_date,attendance_status,check_in,check_out) VALUES(?,?,?,?,?) ON DUPLICATE KEY UPDATE attendance_status=VALUES(attendance_status),check_in=VALUES(check_in),check_out=VALUES(check_out)', (int)$_POST['employee_id'], $_POST['date'], $_POST['status'], $_POST['in']?:null, $_POST['out']?:null);
+        flash('Attendance saved.');
+        header('Location:index.php?page=attendance');
+        exit;
+    }
+    if($action==='leave_submit'){
+        require_login();
+        $u=user();
+        if($_POST['end']<$_POST['start'])throw new Exception('End date must be after start date.');
+        q($conn, 'INSERT INTO leave_request(employee_id,leave_type,start_date,end_date,reason) VALUES(?,?,?,?,?)', (int)$u['employee_id'], $_POST['type'], $_POST['start'], $_POST['end'], trim($_POST['reason']));
+        flash('Leave request submitted.');
+        header('Location:index.php?page=my_leaves');
+        exit;
+    }
+    if($action==='leave_review'){
+        require_admin();
+        q($conn, 'UPDATE leave_request SET leave_status=?,reviewed_by=?,reviewed_on=NOW() WHERE leave_id=? AND leave_status="PENDING"', $_POST['status'], (int)user()['employee_id'], (int)$_POST['leave_id']);
+        flash('Leave request updated.');
+        header('Location:index.php?page=leaves');
+        exit;
+    }
+    if($action==='leave_cancel'){
+        require_login();
+        q($conn, "UPDATE leave_request SET leave_status='CANCELLED' WHERE leave_id=? AND employee_id=? AND leave_status='PENDING'", (int)$_POST['leave_id'], (int)user()['employee_id']);
+        flash('Leave request cancelled.');
+        header('Location:index.php?page=my_leaves');
+        exit;
+    }
+    if($action==='salary_save'){
+        require_admin();
+        $d=$_POST;
+        q($conn, 'INSERT INTO salary_structure(employee_id,effective_from,effective_to,basic_salary,hra,travel_allowance,other_allowance,pf_deduction,tax_deduction) VALUES(?,?,?,?,?,?,?,?,?)', (int)$d['employee_id'], $d['from'], $d['to']?:null, (float)$d['basic'], (float)$d['hra'], (float)$d['travel'], (float)$d['other'], (float)$d['pf'], (float)$d['tax']);
+        flash('Salary structure saved.');
+        header('Location:index.php?page=salaries');
+        exit;
+    }
+    if ($action === 'payslip_generate') {
+        require_admin();
+        $m = $_POST['month'] . '-01';
+        $id = (int) $_POST['employee_id'];
+        $alreadyExists = q( $conn, 'SELECT 1 FROM payslip WHERE employee_id = ? AND pay_month = ? LIMIT 1', $id, $m) ->get_result()->num_rows > 0;
+        if ($alreadyExists) {
+            throw new Exception('A payslip has already been generated for this employee and month.');
+        }
+        $sql = "
         INSERT INTO payslip (
             employee_id,
             salary_id,
@@ -153,56 +226,807 @@ if ($alreadyExists) {
             ss.pf_deduction,
             ss.tax_deduction
     ";
-
-    q($conn, $sql, $m, $m, $id);
-
-    if ($conn->affected_rows === 0) {
-        throw new Exception(
-            'Payslip already exists, or attendance/salary structure is unavailable for this month.'
-        );
+        q($conn, $sql, $m, $m, $id);
+        if ($conn->affected_rows === 0) {
+            throw new Exception( 'Payslip already exists, or attendance/salary structure is unavailable for this month.');
+        }
+        flash('Payslip generated successfully.');
+        header('Location:index.php?page=payslips');
+        exit;
     }
-
-    flash('Payslip generated successfully.');
-    header('Location:index.php?page=payslips');
-    exit;
-}} catch (Throwable $e) {
+}
+catch (Throwable $e) {
     flash($e->getMessage(), 'danger');
     header('Location:index.php?page=' . ($page ?: 'dashboard'));
     exit;
 }
-if(!logged_in()){?><!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>EPMS Login</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"><link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet"><link href="assets/style.css" rel="stylesheet"></head><body><div class="login-wrap"><div class="card login-card"><div class="row g-0"><div class="col-lg-6 login-panel p-5 d-flex flex-column justify-content-center"><i class="bi bi-cash-stack mb-4"></i><h1 class="display-6 fw-bold">Employee Payroll Management System</h1><p class="lead opacity-75">Employee records, attendance, leave workflow and monthly payroll in one secure system.</p><p class="small opacity-75 mt-4"><i class="bi bi-shield-check me-2"></i>Role-based access for HR/Admin and employees</p></div><div class="col-lg-6 p-4 p-md-5 d-flex flex-column justify-content-center"><h2 class="fw-bold">Welcome back</h2><p class="text-secondary">Sign in to access your workspace.</p><?php show_flash();?><form method="post"><input type="hidden" name="action" value="login"><div class="mb-3"><label class="form-label">Email address</label><input class="form-control" type="email" name="email" required></div><div class="mb-4"><label class="form-label">Password</label><input class="form-control" type="password" name="password" required></div><button class="btn btn-primary w-100 py-2">Sign in <i class="bi bi-arrow-right ms-1"></i></button></form><div class="alert alert-light border small mt-4 mb-0"><b>Demo accounts</b><br>Admin: ananya.sharma@company.com<br>Employee: rahul.verma@company.com<br>Password: <code>password</code></div></div></div></div></div></body></html><?php exit;}
-$page=$page?: (is_admin()?'dashboard':'employee_dashboard'); if(is_admin()&&in_array($page,['dashboard','employees','masters','salaries','attendance','leaves','payslips','reports']))require_admin();else require_login();
-if($page==='dashboard'){page_top('Admin Dashboard');section_title('Admin Dashboard','Overview of your employee payroll system.');$cards=[['Total employees',scalar($conn,'SELECT COUNT(*) FROM employee'),'bi-people','primary'],['Active employees',scalar($conn,"SELECT COUNT(*) FROM employee WHERE employment_status='ACTIVE'"),'bi-person-check','success'],['Pending leaves',scalar($conn,"SELECT COUNT(*) FROM leave_request WHERE leave_status='PENDING'"),'bi-calendar2-week','warning'],['August payroll',money(scalar($conn,"SELECT COALESCE(SUM(net_salary),0) FROM payslip WHERE pay_month='2026-08-01'")),'bi-wallet2','info']];?><div class="row g-3 mb-4"><?php foreach($cards as $c):?><div class="col-md-6 col-xl-3"><div class="card metric border-<?=$c[3]?>"><div class="card-body"><div class="small text-secondary"><?=$c[0]?></div><div class="metric-value"><?=$c[1]?></div><i class="bi <?=$c[2]?> text-<?=$c[3]?>"></i></div></div></div><?php endforeach;?></div><div class="row g-4"><div class="col-lg-7"><div class="card"><div class="card-body"><h5 class="fw-bold">Department-wise August payroll</h5><table class="table mb-0"><thead><tr><th>Department</th><th>Payslips</th><th>Net payroll</th></tr></thead><tbody><?php $r=$conn->query("SELECT d.department_name,COUNT(p.payslip_id)c,COALESCE(SUM(p.net_salary),0)n FROM department d LEFT JOIN employee e ON e.department_id=d.department_id LEFT JOIN payslip p ON p.employee_id=e.employee_id AND p.pay_month='2026-08-01' GROUP BY d.department_id");while($x=$r->fetch_assoc()):?><tr><td><?=e($x['department_name'])?></td><td><?=$x['c']?></td><td class="fw-bold"><?=money($x['n'])?></td></tr><?php endwhile;?></tbody></table></div></div></div><div class="col-lg-5"><div class="d-grid gap-3"><a class="quick-link" href="index.php?page=employees"><i class="bi bi-person-plus me-2"></i>Manage employees</a><a class="quick-link" href="index.php?page=leaves"><i class="bi bi-check2-square me-2"></i>Review leave requests</a><a class="quick-link" href="index.php?page=payslips"><i class="bi bi-receipt me-2"></i>Generate payslip</a><a class="quick-link" href="index.php?page=reports"><i class="bi bi-bar-chart me-2"></i>View reports</a></div></div></div><?php page_bottom();exit;}
-if($page==='employees'){$edit=!empty($_GET['edit'])?$conn->query('SELECT * FROM employee WHERE employee_id='.(int)$_GET['edit'])->fetch_assoc():null;$deps=get_options($conn,'department','department_id','department_name');$des=get_options($conn,'designation','designation_id','designation_name');page_top('Employees');section_title('Employee Management','Create and update employee records.');?><div class="card mb-4"><div class="card-body"><h5 class="fw-bold"><?=$edit?'Edit employee':'Add employee'?></h5><form method="post" class="row g-3"><input type="hidden" name="action" value="employee_save"><input type="hidden" name="id" value="<?=$edit['employee_id']??''?>"><?php foreach(['code'=>'Employee code','first'=>'First name','last'=>'Last name','email'=>'Email','phone'=>'Phone'] as $n=>$l):?><div class="col-md"><label class="form-label"><?=$l?></label><input class="form-control" name="<?=$n?>" value="<?=e($edit[$n==='code'?'employee_code':($n.'_name')]??($edit[$n]??''))?>" <?=in_array($n,['code','first','last','email'])?'required':''?>></div><?php endforeach;?><div class="col-md-3"><label class="form-label">Join date</label><input type="date" class="form-control" name="join" value="<?=e($edit['join_date']??date('Y-m-d'))?>"></div><div class="col-md-3"><label class="form-label">Department</label><select name="department" class="form-select"><?php foreach($deps as $x):?><option value="<?=$x['department_id']?>" <?=selected((string)$x['department_id'],(string)($edit['department_id']??''))?>><?=e($x['department_name'])?></option><?php endforeach;?></select></div><div class="col-md-3"><label class="form-label">Designation</label><select name="designation" class="form-select"><?php foreach($des as $x):?><option value="<?=$x['designation_id']?>" <?=selected((string)$x['designation_id'],(string)($edit['designation_id']??''))?>><?=e($x['designation_name'])?></option><?php endforeach;?></select></div><?php if(!$edit):?><div class="col-md-3"><label class="form-label">Password</label><input name="password" class="form-control" placeholder="Default: password"></div><?php endif;?><div class="col-md-3"><label class="form-label">Role</label><select name="role" class="form-select"><option <?=selected('EMPLOYEE',$edit['role']??'EMPLOYEE')?>>EMPLOYEE</option><option <?=selected('ADMIN',$edit['role']??'')?>>ADMIN</option></select></div><div class="col-md-3"><label class="form-label">Status</label><select name="status" class="form-select"><?php foreach(['ACTIVE','INACTIVE','ON_LEAVE','RESIGNED'] as $s):?><option <?=selected($s,$edit['employment_status']??'ACTIVE')?>><?=$s?></option><?php endforeach;?></select></div><div class="col-12"><button class="btn btn-primary">Save employee</button><?php if($edit):?><a href="index.php?page=employees" class="btn btn-outline-secondary">Cancel</a><?php endif;?></div></form></div></div><div class="card table-card"><div class="card-body"><div class="table-responsive"><table class="table align-middle"><thead><tr><th>Code</th><th>Employee</th><th>Department</th><th>Designation</th><th>Role</th><th>Status</th><th></th></tr></thead><tbody><?php $r=$conn->query('SELECT e.*,d.department_name,ds.designation_name FROM employee e JOIN department d ON d.department_id=e.department_id JOIN designation ds ON ds.designation_id=e.designation_id ORDER BY employee_id');while($x=$r->fetch_assoc()):?><tr><td><?=e($x['employee_code'])?></td><td><?=e($x['first_name'].' '.$x['last_name'])?><small class="d-block text-secondary"><?=e($x['email'])?></small></td><td><?=e($x['department_name'])?></td><td><?=e($x['designation_name'])?></td><td><?=badge($x['role'])?></td><td><?=badge($x['employment_status'])?></td><td class="text-nowrap">
-    <a class="btn btn-sm btn-outline-primary"
+if(!logged_in()){?><!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EPMS Login</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+<link href="assets/style.css" rel="stylesheet">
+</head>
+<body>
+<div class="login-wrap">
+<div class="card login-card">
+<div class="row g-0">
+<div class="col-lg-6 login-panel p-5 d-flex flex-column justify-content-center">
+<i class="bi bi-cash-stack mb-4">
+</i>
+<h1 class="display-6 fw-bold">Employee Payroll Management System</h1>
+<p class="lead opacity-75">Employee records, attendance, leave workflow and monthly payroll in one secure system.</p>
+<p class="small opacity-75 mt-4">
+<i class="bi bi-shield-check me-2">
+</i>Role-based access for HR/Admin and employees</p>
+</div>
+<div class="col-lg-6 p-4 p-md-5 d-flex flex-column justify-content-center">
+<h2 class="fw-bold">Welcome back</h2>
+<p class="text-secondary">Sign in to access your workspace.</p><?php
+show_flash();?><form method="post">
+<input type="hidden" name="action" value="login">
+<div class="mb-3">
+<label class="form-label">Email address</label>
+<input class="form-control" type="email" name="email" required>
+</div>
+<div class="mb-4">
+<label class="form-label">Password</label>
+<input class="form-control" type="password" name="password" required>
+</div>
+<button class="btn btn-primary w-100 py-2">Sign in <i class="bi bi-arrow-right ms-1">
+</i>
+</button>
+</form>
+<div class="alert alert-light border small mt-4 mb-0">
+<b>Demo accounts</b>
+<br>Admin: ananya.sharma@company.com<br>Employee: rahul.verma@company.com<br>Password: <code>password</code>
+</div>
+</div>
+</div>
+</div>
+</div>
+</body>
+</html><?php
+exit;
+}
+$page=$page?: (is_admin()?'dashboard':'employee_dashboard');
+if(is_admin()&&in_array($page, ['dashboard', 'employees', 'masters', 'salaries', 'attendance', 'leaves', 'payslips', 'reports']))require_admin();
+else require_login();
+if($page==='dashboard'){
+    page_top('Admin Dashboard');
+    section_title('Admin Dashboard', 'Overview of your employee payroll system.');
+    $cards=[['Total employees', scalar($conn, 'SELECT COUNT(*) FROM employee'), 'bi-people', 'primary'], ['Active employees', scalar($conn, "SELECT COUNT(*) FROM employee WHERE employment_status='ACTIVE'"), 'bi-person-check', 'success'], ['Pending leaves', scalar($conn, "SELECT COUNT(*) FROM leave_request WHERE leave_status='PENDING'"), 'bi-calendar2-week', 'warning'], ['August payroll', money(scalar($conn, "SELECT COALESCE(SUM(net_salary),0) FROM payslip WHERE pay_month='2026-08-01'")), 'bi-wallet2', 'info']];?><div class="row g-3 mb-4"><?php
+foreach($cards as $c):?><div class="col-md-6 col-xl-3">
+<div class="card metric border-<?=$c[3]?>">
+<div class="card-body">
+<div class="small text-secondary"><?=$c[0]?></div>
+<div class="metric-value"><?=$c[1]?></div>
+<i class="bi <?=$c[2]?> text-<?=$c[3]?>">
+</i>
+</div>
+</div>
+</div><?php
+endforeach;?></div>
+<div class="row g-4">
+<div class="col-lg-7">
+<div class="card">
+<div class="card-body">
+<h5 class="fw-bold">Department-wise August payroll</h5>
+<table class="table mb-0">
+<thead>
+<tr>
+<th>Department</th>
+<th>Payslips</th>
+<th>Net payroll</th>
+</tr>
+</thead>
+<tbody><?php
+$r=$conn->query("SELECT d.department_name,COUNT(p.payslip_id)c,COALESCE(SUM(p.net_salary),0)n FROM department d LEFT JOIN employee e ON e.department_id=d.department_id LEFT JOIN payslip p ON p.employee_id=e.employee_id AND p.pay_month='2026-08-01' GROUP BY d.department_id");
+while($x=$r->fetch_assoc()):?><tr>
+<td><?=e($x['department_name'])?></td>
+<td><?=$x['c']?></td>
+<td class="fw-bold"><?=money($x['n'])?></td>
+</tr><?php
+endwhile;?></tbody>
+</table>
+</div>
+</div>
+</div>
+<div class="col-lg-5">
+<div class="d-grid gap-3">
+<a class="quick-link" href="index.php?page=employees">
+<i class="bi bi-person-plus me-2">
+</i>Manage employees</a>
+<a class="quick-link" href="index.php?page=leaves">
+<i class="bi bi-check2-square me-2">
+</i>Review leave requests</a>
+<a class="quick-link" href="index.php?page=payslips">
+<i class="bi bi-receipt me-2">
+</i>Generate payslip</a>
+<a class="quick-link" href="index.php?page=reports">
+<i class="bi bi-bar-chart me-2">
+</i>View reports</a>
+</div>
+</div>
+</div><?php
+page_bottom();
+exit;
+}
+if($page==='employees'){
+    $edit=!empty($_GET['edit'])?$conn->query('SELECT * FROM employee WHERE employee_id='.(int)$_GET['edit'])->fetch_assoc():null;
+    $deps=get_options($conn, 'department', 'department_id', 'department_name');
+    $des=get_options($conn, 'designation', 'designation_id', 'designation_name');
+    page_top('Employees');
+    section_title('Employee Management', 'Create and update employee records.');?><div class="card mb-4">
+<div class="card-body">
+<h5 class="fw-bold"><?=$edit?'Edit employee':'Add employee'?></h5>
+<form method="post" class="row g-3">
+<input type="hidden" name="action" value="employee_save">
+<input type="hidden" name="id" value="<?=$edit['employee_id']??''?>"><?php
+foreach(['code'=>'Employee code', 'first'=>'First name', 'last'=>'Last name', 'email'=>'Email', 'phone'=>'Phone'] as $n=>$l):?><div class="col-md">
+<label class="form-label"><?=$l?></label>
+<input class="form-control" name="<?=$n?>" value="<?=e($edit[$n==='code'?'employee_code':($n.'_name')]??($edit[$n]??''))?>"<?=in_array($n,['code','first','last','email'])?'required':''?>>
+</div><?php
+endforeach;?><div class="col-md-3">
+<label class="form-label">Join date</label>
+<input type="date" class="form-control" name="join" value="<?=e($edit['join_date']??date('Y-m-d'))?>">
+</div>
+<div class="col-md-3">
+<label class="form-label">Department</label>
+<select name="department" class="form-select"><?php
+foreach($deps as $x):?><option value="<?=$x['department_id']?>"<?=selected((string)$x['department_id'],(string)($edit['department_id']??''))?>><?=e($x['department_name'])?></option><?php
+endforeach;?></select>
+</div>
+<div class="col-md-3">
+<label class="form-label">Designation</label>
+<select name="designation" class="form-select"><?php
+foreach($des as $x):?><option value="<?=$x['designation_id']?>"<?=selected((string)$x['designation_id'],(string)($edit['designation_id']??''))?>><?=e($x['designation_name'])?></option><?php
+endforeach;?></select>
+</div><?php
+if(!$edit):?><div class="col-md-3">
+<label class="form-label">Password</label>
+<input name="password" class="form-control" placeholder="Default: password">
+</div><?php
+endif;?><div class="col-md-3">
+<label class="form-label">Role</label>
+<select name="role" class="form-select">
+<option<?=selected('EMPLOYEE',$edit['role']??'EMPLOYEE')?>>EMPLOYEE</option>
+<option<?=selected('ADMIN',$edit['role']??'')?>>ADMIN</option>
+</select>
+</div>
+<div class="col-md-3">
+<label class="form-label">Status</label>
+<select name="status" class="form-select"><?php
+foreach(['ACTIVE', 'INACTIVE', 'ON_LEAVE', 'RESIGNED'] as $s):?><option<?=selected($s,$edit['employment_status']??'ACTIVE')?>><?=$s?></option><?php
+endforeach;?></select>
+</div>
+<div class="col-12">
+<button class="btn btn-primary">Save employee</button><?php
+if($edit):?><a href="index.php?page=employees" class="btn btn-outline-secondary">Cancel</a><?php
+endif;?></div>
+</form>
+</div>
+</div>
+<div class="card table-card">
+<div class="card-body">
+<div class="table-responsive">
+<table class="table align-middle">
+<thead>
+<tr>
+<th>Code</th>
+<th>Employee</th>
+<th>Department</th>
+<th>Designation</th>
+<th>Role</th>
+<th>Status</th>
+<th>
+</th>
+</tr>
+</thead>
+<tbody><?php
+$r=$conn->query('SELECT e.*,d.department_name,ds.designation_name FROM employee e JOIN department d ON d.department_id=e.department_id JOIN designation ds ON ds.designation_id=e.designation_id ORDER BY employee_id');
+while($x=$r->fetch_assoc()):?><tr>
+<td><?=e($x['employee_code'])?></td>
+<td><?=e($x['first_name'].' '.$x['last_name'])?><small class="d-block text-secondary"><?=e($x['email'])?></small>
+</td>
+<td><?=e($x['department_name'])?></td>
+<td><?=e($x['designation_name'])?></td>
+<td><?=badge($x['role'])?></td>
+<td><?=badge($x['employment_status'])?></td>
+<td class="text-nowrap">
+<a class="btn btn-sm btn-outline-primary"
        href="index.php?page=employees&edit=<?=$x['employee_id']?>">
         Edit
     </a>
-
-    <form method="post" class="d-inline"
+<form method="post" class="d-inline"
           onsubmit="return confirm('Delete this employee and all related records permanently?');">
-        <input type="hidden" name="action" value="employee_delete">
-        <input type="hidden" name="id" value="<?=$x['employee_id']?>">
-        <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
-    </form>
-</td></tr><?php endwhile;?></tbody></table></div></div></div><?php page_bottom();exit;}
-if($page==='masters'){page_top('Master Data');section_title('Departments & Designations','Manage employee departments and job titles.');?><div class="row g-4"><?php foreach([['department','Department','department_name','department_location','Location'],['designation','Designation','designation_name','description','Description']] as $a):?><div class="col-lg-6"><div class="card"><div class="card-body"><h5 class="fw-bold"><?=$a[1]?>s</h5><form method="post" class="row g-2 mb-4"><input type="hidden" name="action" value="master_save"><input type="hidden" name="kind" value="<?=$a[0]?>"><div class="col-md-5"><input class="form-control" name="name" placeholder="<?=$a[1]?> name" required></div><div class="col-md-5"><input class="form-control" name="detail" placeholder="<?=$a[4]?>"></div><div class="col-md-2"><button class="btn btn-primary w-100">Add</button></div></form><table class="table"><thead><tr><th>Name</th><th><?=$a[4]?></th></tr></thead><tbody><?php $r=$conn->query('SELECT * FROM '.$a[0].' ORDER BY '.$a[2]);while($x=$r->fetch_assoc()):?><tr><td><?=e($x[$a[2]])?></td><td><?=e($x[$a[3]])?></td></tr><?php endwhile;?></tbody></table></div></div></div><?php endforeach;?></div><?php page_bottom();exit;}
-if($page==='attendance'){page_top('Attendance');section_title('Attendance Management','Record and review daily attendance.');$emps=$conn->query("SELECT employee_id,employee_code,first_name,last_name FROM employee WHERE employment_status='ACTIVE' ORDER BY first_name");?><div class="card mb-4"><div class="card-body"><form method="post" class="row g-3"><input type="hidden" name="action" value="attendance_save"><div class="col-md-4"><label class="form-label">Employee</label><select name="employee_id" class="form-select"><?php while($x=$emps->fetch_assoc()):?><option value="<?=$x['employee_id']?>"><?=e($x['employee_code'].' - '.$x['first_name'].' '.$x['last_name'])?></option><?php endwhile;?></select></div><div class="col-md-3"><label class="form-label">Date</label><input name="date" type="date" class="form-control" value="<?=date('Y-m-d')?>"></div><div class="col-md-2"><label class="form-label">Status</label><select name="status" class="form-select"><option>PRESENT</option><option>ABSENT</option><option>HALF_DAY</option><option>LEAVE</option></select></div><div class="col-md"><label class="form-label">Check-in</label><input name="in" type="time" class="form-control"></div><div class="col-md"><label class="form-label">Check-out</label><input name="out" type="time" class="form-control"></div><div class="col-auto d-flex align-items-end"><button class="btn btn-primary">Save</button></div></form></div></div><div class="card table-card"><div class="card-body"><div class="table-responsive"><table class="table"><thead><tr><th>Date</th><th>Employee</th><th>Status</th><th>Check-in</th><th>Check-out</th></tr></thead><tbody><?php $r=$conn->query('SELECT a.*,e.employee_code,e.first_name,e.last_name FROM attendance a JOIN employee e ON e.employee_id=a.employee_id ORDER BY attendance_date DESC,a.employee_id LIMIT 100');while($x=$r->fetch_assoc()):?><tr><td><?=e($x['attendance_date'])?></td><td><?=e($x['employee_code'].' - '.$x['first_name'].' '.$x['last_name'])?></td><td><?=badge($x['attendance_status'])?></td><td><?=e($x['check_in']??'—')?></td><td><?=e($x['check_out']??'—')?></td></tr><?php endwhile;?></tbody></table></div></div></div><?php page_bottom();exit;}
-if($page==='salaries'){page_top('Salary Structures');section_title('Salary Structures','Add salary records and preserve salary history.');$emps=$conn->query("SELECT employee_id,employee_code,first_name,last_name FROM employee WHERE employment_status='ACTIVE' ORDER BY first_name");?><div class="card mb-4"><div class="card-body"><form method="post" class="row g-3"><input type="hidden" name="action" value="salary_save"><div class="col-md-4"><label class="form-label">Employee</label><select name="employee_id" class="form-select"><?php while($x=$emps->fetch_assoc()):?><option value="<?=$x['employee_id']?>"><?=e($x['employee_code'].' - '.$x['first_name'].' '.$x['last_name'])?></option><?php endwhile;?></select></div><div class="col-md-4"><label class="form-label">Effective from</label><input name="from" type="date" class="form-control" value="<?=date('Y-m-d')?>"></div><div class="col-md-4"><label class="form-label">Effective to</label><input name="to" type="date" class="form-control"></div><?php foreach(['basic'=>'Basic salary','hra'=>'HRA','travel'=>'Travel allowance','other'=>'Other allowance','pf'=>'PF deduction','tax'=>'Tax deduction'] as $n=>$l):?><div class="col-md-4"><label class="form-label"><?=$l?></label><input name="<?=$n?>" type="number" min="0" step=".01" class="form-control" value="0"></div><?php endforeach;?><div class="col-12"><button class="btn btn-primary">Save salary structure</button></div></form></div></div><div class="card table-card"><div class="card-body"><div class="table-responsive"><table class="table"><thead><tr><th>Employee</th><th>Effective period</th><th>Basic</th><th>Allowances</th><th>Deductions</th></tr></thead><tbody><?php $r=$conn->query('SELECT ss.*,e.employee_code,e.first_name,e.last_name FROM salary_structure ss JOIN employee e ON e.employee_id=ss.employee_id ORDER BY salary_id DESC');while($x=$r->fetch_assoc()):?><tr><td><?=e($x['employee_code'].' - '.$x['first_name'].' '.$x['last_name'])?></td><td><?=e($x['effective_from'])?> to <?=e($x['effective_to']?:'Current')?></td><td><?=money($x['basic_salary'])?></td><td><?=money($x['hra']+$x['travel_allowance']+$x['other_allowance'])?></td><td><?=money($x['pf_deduction']+$x['tax_deduction'])?></td></tr><?php endwhile;?></tbody></table></div></div></div><?php page_bottom();exit;}
-if($page==='leaves'){page_top('Leave Management');section_title('Leave Requests','Approve or reject employee leave requests.');?><div class="card table-card"><div class="card-body"><div class="table-responsive"><table class="table align-middle"><thead><tr><th>Employee</th><th>Period</th><th>Request</th><th>Status</th><th>Action</th></tr></thead><tbody><?php $r=$conn->query('SELECT l.*,e.employee_code,e.first_name,e.last_name FROM leave_request l JOIN employee e ON e.employee_id=l.employee_id ORDER BY FIELD(l.leave_status,"PENDING","APPROVED","REJECTED","CANCELLED"),l.applied_on DESC');while($x=$r->fetch_assoc()):?><tr><td><?=e($x['employee_code'].' - '.$x['first_name'].' '.$x['last_name'])?></td><td><?=e($x['start_date'])?> to <?=e($x['end_date'])?></td><td><?=badge($x['leave_type'])?><small class="d-block text-secondary mt-1"><?=e($x['reason'])?></small></td><td><?=badge($x['leave_status'])?></td><td><?php if($x['leave_status']==='PENDING'):?><form method="post" class="d-flex gap-1"><input type="hidden" name="action" value="leave_review"><input type="hidden" name="leave_id" value="<?=$x['leave_id']?>"><button name="status" value="APPROVED" class="btn btn-sm btn-success">Approve</button><button name="status" value="REJECTED" class="btn btn-sm btn-outline-danger">Reject</button></form><?php endif;?></td></tr><?php endwhile;?></tbody></table></div></div></div><?php page_bottom();exit;}
-if($page==='payslips'){page_top('Payslips');section_title('Payslip Management','Generate monthly payslips from salary structures and attendance.');$emps=$conn->query("SELECT employee_id,employee_code,first_name,last_name FROM employee WHERE employment_status='ACTIVE' ORDER BY first_name");?><div class="card mb-4"><div class="card-body"><form method="post" class="row g-3 align-items-end"><input type="hidden" name="action" value="payslip_generate"><div class="col-md-7"><label class="form-label">Employee</label><select name="employee_id" class="form-select"><?php while($x=$emps->fetch_assoc()):?><option value="<?=$x['employee_id']?>"><?=e($x['employee_code'].' - '.$x['first_name'].' '.$x['last_name'])?></option><?php endwhile;?></select></div><div class="col-md-3"><label class="form-label">Pay month</label><input type="month" name="month" class="form-control" value="2026-08"></div><div class="col-md-2"><button class="btn btn-primary w-100">Generate</button></div></form></div></div><div class="card table-card"><div class="card-body"><button class="btn btn-sm btn-outline-secondary float-end no-print" onclick="print()"><i class="bi bi-printer"></i> Print</button><div class="table-responsive"><table class="table"><thead><tr><th>Month</th><th>Employee</th><th>Paid days</th><th>Gross</th><th>Deductions</th><th>Net</th><th>Print</th></tr></thead><tbody><?php $r=$conn->query('SELECT p.*,e.employee_code,e.first_name,e.last_name FROM payslip p JOIN employee e ON e.employee_id=p.employee_id ORDER BY p.pay_month DESC,e.first_name');while($x=$r->fetch_assoc()):?><tr><td><?=date('F Y',strtotime($x['pay_month']))?></td><td><?=e($x['employee_code'].' - '.$x['first_name'].' '.$x['last_name'])?></td><td><?=$x['paid_days']?> / <?=$x['working_days']?></td><td><?=money($x['gross_salary'])?></td><td><?=money($x['total_deduction'])?></td><td class="fw-bold text-success"><?=money($x['net_salary'])?></td>
+<input type="hidden" name="action" value="employee_delete">
+<input type="hidden" name="id" value="<?=$x['employee_id']?>">
+<button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+</form>
+</td>
+</tr><?php
+endwhile;?></tbody>
+</table>
+</div>
+</div>
+</div><?php
+page_bottom();
+exit;
+}
+if($page==='masters'){
+    page_top('Master Data');
+    section_title('Departments & Designations', 'Manage employee departments and job titles.');?><div class="row g-4"><?php
+foreach([['department', 'Department', 'department_name', 'department_location', 'Location'], ['designation', 'Designation', 'designation_name', 'description', 'Description']] as $a):?><div class="col-lg-6">
+<div class="card">
+<div class="card-body">
+<h5 class="fw-bold"><?=$a[1]?>s</h5>
+<form method="post" class="row g-2 mb-4">
+<input type="hidden" name="action" value="master_save">
+<input type="hidden" name="kind" value="<?=$a[0]?>">
+<div class="col-md-5">
+<input class="form-control" name="name" placeholder="<?=$a[1]?> name" required>
+</div>
+<div class="col-md-5">
+<input class="form-control" name="detail" placeholder="<?=$a[4]?>">
+</div>
+<div class="col-md-2">
+<button class="btn btn-primary w-100">Add</button>
+</div>
+</form>
+<table class="table">
+<thead>
+<tr>
+<th>Name</th>
+<th><?=$a[4]?></th>
+</tr>
+</thead>
+<tbody><?php
+$r=$conn->query('SELECT * FROM '.$a[0].' ORDER BY '.$a[2]);
+while($x=$r->fetch_assoc()):?><tr>
+<td><?=e($x[$a[2]])?></td>
+<td><?=e($x[$a[3]])?></td>
+</tr><?php
+endwhile;?></tbody>
+</table>
+</div>
+</div>
+</div><?php
+endforeach;?></div><?php
+page_bottom();
+exit;
+}
+if($page==='attendance'){
+    page_top('Attendance');
+    section_title('Attendance Management', 'Record and review daily attendance.');
+    $emps=$conn->query("SELECT employee_id,employee_code,first_name,last_name FROM employee WHERE employment_status='ACTIVE' ORDER BY first_name");?><div class="card mb-4">
+<div class="card-body">
+<form method="post" class="row g-3">
+<input type="hidden" name="action" value="attendance_save">
+<div class="col-md-4">
+<label class="form-label">Employee</label>
+<select name="employee_id" class="form-select"><?php
+while($x=$emps->fetch_assoc()):?><option value="<?=$x['employee_id']?>"><?=e($x['employee_code'].' - '.$x['first_name'].' '.$x['last_name'])?></option><?php
+endwhile;?></select>
+</div>
+<div class="col-md-3">
+<label class="form-label">Date</label>
+<input name="date" type="date" class="form-control" value="<?=date('Y-m-d')?>">
+</div>
+<div class="col-md-2">
+<label class="form-label">Status</label>
+<select name="status" class="form-select">
+<option>PRESENT</option>
+<option>ABSENT</option>
+<option>HALF_DAY</option>
+<option>LEAVE</option>
+</select>
+</div>
+<div class="col-md">
+<label class="form-label">Check-in</label>
+<input name="in" type="time" class="form-control">
+</div>
+<div class="col-md">
+<label class="form-label">Check-out</label>
+<input name="out" type="time" class="form-control">
+</div>
+<div class="col-auto d-flex align-items-end">
+<button class="btn btn-primary">Save</button>
+</div>
+</form>
+</div>
+</div>
+<div class="card table-card">
+<div class="card-body">
+<div class="table-responsive">
+<table class="table">
+<thead>
+<tr>
+<th>Date</th>
+<th>Employee</th>
+<th>Status</th>
+<th>Check-in</th>
+<th>Check-out</th>
+</tr>
+</thead>
+<tbody><?php
+$r=$conn->query('SELECT a.*,e.employee_code,e.first_name,e.last_name FROM attendance a JOIN employee e ON e.employee_id=a.employee_id ORDER BY attendance_date DESC,a.employee_id LIMIT 100');
+while($x=$r->fetch_assoc()):?><tr>
+<td><?=e($x['attendance_date'])?></td>
+<td><?=e($x['employee_code'].' - '.$x['first_name'].' '.$x['last_name'])?></td>
+<td><?=badge($x['attendance_status'])?></td>
+<td><?=e($x['check_in']??'—')?></td>
+<td><?=e($x['check_out']??'—')?></td>
+</tr><?php
+endwhile;?></tbody>
+</table>
+</div>
+</div>
+</div><?php
+page_bottom();
+exit;
+}
+if($page==='salaries'){
+    page_top('Salary Structures');
+    section_title('Salary Structures', 'Add salary records and preserve salary history.');
+    $emps=$conn->query("SELECT employee_id,employee_code,first_name,last_name FROM employee WHERE employment_status='ACTIVE' ORDER BY first_name");?><div class="card mb-4">
+<div class="card-body">
+<form method="post" class="row g-3">
+<input type="hidden" name="action" value="salary_save">
+<div class="col-md-4">
+<label class="form-label">Employee</label>
+<select name="employee_id" class="form-select"><?php
+while($x=$emps->fetch_assoc()):?><option value="<?=$x['employee_id']?>"><?=e($x['employee_code'].' - '.$x['first_name'].' '.$x['last_name'])?></option><?php
+endwhile;?></select>
+</div>
+<div class="col-md-4">
+<label class="form-label">Effective from</label>
+<input name="from" type="date" class="form-control" value="<?=date('Y-m-d')?>">
+</div>
+<div class="col-md-4">
+<label class="form-label">Effective to</label>
+<input name="to" type="date" class="form-control">
+</div><?php
+foreach(['basic'=>'Basic salary', 'hra'=>'HRA', 'travel'=>'Travel allowance', 'other'=>'Other allowance', 'pf'=>'PF deduction', 'tax'=>'Tax deduction'] as $n=>$l):?><div class="col-md-4">
+<label class="form-label"><?=$l?></label>
+<input name="<?=$n?>" type="number" min="0" step=".01" class="form-control" value="0">
+</div><?php
+endforeach;?><div class="col-12">
+<button class="btn btn-primary">Save salary structure</button>
+</div>
+</form>
+</div>
+</div>
+<div class="card table-card">
+<div class="card-body">
+<div class="table-responsive">
+<table class="table">
+<thead>
+<tr>
+<th>Employee</th>
+<th>Effective period</th>
+<th>Basic</th>
+<th>Allowances</th>
+<th>Deductions</th>
+</tr>
+</thead>
+<tbody><?php
+$r=$conn->query('SELECT ss.*,e.employee_code,e.first_name,e.last_name FROM salary_structure ss JOIN employee e ON e.employee_id=ss.employee_id ORDER BY salary_id DESC');
+while($x=$r->fetch_assoc()):?><tr>
+<td><?=e($x['employee_code'].' - '.$x['first_name'].' '.$x['last_name'])?></td>
+<td><?=e($x['effective_from'])?> to <?=e($x['effective_to']?:'Current')?></td>
+<td><?=money($x['basic_salary'])?></td>
+<td><?=money($x['hra']+$x['travel_allowance']+$x['other_allowance'])?></td>
+<td><?=money($x['pf_deduction']+$x['tax_deduction'])?></td>
+</tr><?php
+endwhile;?></tbody>
+</table>
+</div>
+</div>
+</div><?php
+page_bottom();
+exit;
+}
+if($page==='leaves'){
+    page_top('Leave Management');
+    section_title('Leave Requests', 'Approve or reject employee leave requests.');?><div class="card table-card">
+<div class="card-body">
+<div class="table-responsive">
+<table class="table align-middle">
+<thead>
+<tr>
+<th>Employee</th>
+<th>Period</th>
+<th>Request</th>
+<th>Status</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody><?php
+$r=$conn->query('SELECT l.*,e.employee_code,e.first_name,e.last_name FROM leave_request l JOIN employee e ON e.employee_id=l.employee_id ORDER BY FIELD(l.leave_status,"PENDING","APPROVED","REJECTED","CANCELLED"),l.applied_on DESC');
+while($x=$r->fetch_assoc()):?><tr>
+<td><?=e($x['employee_code'].' - '.$x['first_name'].' '.$x['last_name'])?></td>
+<td><?=e($x['start_date'])?> to <?=e($x['end_date'])?></td>
+<td><?=badge($x['leave_type'])?><small class="d-block text-secondary mt-1"><?=e($x['reason'])?></small>
+</td>
+<td><?=badge($x['leave_status'])?></td>
+<td><?php
+if($x['leave_status']==='PENDING'):?><form method="post" class="d-flex gap-1">
+<input type="hidden" name="action" value="leave_review">
+<input type="hidden" name="leave_id" value="<?=$x['leave_id']?>">
+<button name="status" value="APPROVED" class="btn btn-sm btn-success">Approve</button>
+<button name="status" value="REJECTED" class="btn btn-sm btn-outline-danger">Reject</button>
+</form><?php
+endif;?></td>
+</tr><?php
+endwhile;?></tbody>
+</table>
+</div>
+</div>
+</div><?php
+page_bottom();
+exit;
+}
+if($page==='payslips'){
+    page_top('Payslips');
+    section_title('Payslip Management', 'Generate monthly payslips from salary structures and attendance.');
+    $emps=$conn->query("SELECT employee_id,employee_code,first_name,last_name FROM employee WHERE employment_status='ACTIVE' ORDER BY first_name");?><div class="card mb-4">
+<div class="card-body">
+<form method="post" class="row g-3 align-items-end">
+<input type="hidden" name="action" value="payslip_generate">
+<div class="col-md-7">
+<label class="form-label">Employee</label>
+<select name="employee_id" class="form-select"><?php
+while($x=$emps->fetch_assoc()):?><option value="<?=$x['employee_id']?>"><?=e($x['employee_code'].' - '.$x['first_name'].' '.$x['last_name'])?></option><?php
+endwhile;?></select>
+</div>
+<div class="col-md-3">
+<label class="form-label">Pay month</label>
+<input type="month" name="month" class="form-control" value="2026-08">
+</div>
+<div class="col-md-2">
+<button class="btn btn-primary w-100">Generate</button>
+</div>
+</form>
+</div>
+</div>
+<div class="card table-card">
+<div class="card-body">
+<button class="btn btn-sm btn-outline-secondary float-end no-print" onclick="print()">
+<i class="bi bi-printer">
+</i> Print</button>
+<div class="table-responsive">
+<table class="table">
+<thead>
+<tr>
+<th>Month</th>
+<th>Employee</th>
+<th>Paid days</th>
+<th>Gross</th>
+<th>Deductions</th>
+<th>Net</th>
+<th>Print</th>
+</tr>
+</thead>
+<tbody><?php
+$r=$conn->query('SELECT p.*,e.employee_code,e.first_name,e.last_name FROM payslip p JOIN employee e ON e.employee_id=p.employee_id ORDER BY p.pay_month DESC,e.first_name');
+while($x=$r->fetch_assoc()):?><tr>
+<td><?=date('F Y',strtotime($x['pay_month']))?></td>
+<td><?=e($x['employee_code'].' - '.$x['first_name'].' '.$x['last_name'])?></td>
+<td><?=$x['paid_days']?>/<?=$x['working_days']?></td>
+<td><?=money($x['gross_salary'])?></td>
+<td><?=money($x['total_deduction'])?></td>
+<td class="fw-bold text-success"><?=money($x['net_salary'])?></td>
 <td>
-    <a class="btn btn-sm btn-outline-primary"
+<a class="btn btn-sm btn-outline-primary"
        target="_blank"
        href="frontend/print_payslip.php?id=<?=$x['payslip_id']?>">
         Print
     </a>
 </td>
-</tr><?php endwhile;?></tbody></table></div></div></div><?php page_bottom();exit;}
-if($page==='reports'){page_top('Reports');section_title('Payroll Reports','Reports created with joins, GROUP BY and aggregate functions.');?><div class="row g-4"><div class="col-lg-6"><div class="card"><div class="card-body"><h5 class="fw-bold">Department-wise employee count</h5><table class="table mb-0"><thead><tr><th>Department</th><th>Employees</th></tr></thead><tbody><?php $r=$conn->query('SELECT d.department_name,COUNT(e.employee_id)c FROM department d LEFT JOIN employee e ON e.department_id=d.department_id GROUP BY d.department_id');while($x=$r->fetch_assoc()):?><tr><td><?=e($x['department_name'])?></td><td><?=$x['c']?></td></tr><?php endwhile;?></tbody></table></div></div></div><div class="col-lg-6"><div class="card"><div class="card-body"><h5 class="fw-bold">Department-wise August payroll</h5><table class="table mb-0"><thead><tr><th>Department</th><th>Payslips</th><th>Net payroll</th></tr></thead><tbody><?php $r=$conn->query("SELECT d.department_name,COUNT(p.payslip_id)c,SUM(p.net_salary)n FROM payslip p JOIN employee e ON e.employee_id=p.employee_id JOIN department d ON d.department_id=e.department_id WHERE p.pay_month='2026-08-01' GROUP BY d.department_id");while($x=$r->fetch_assoc()):?><tr><td><?=e($x['department_name'])?></td><td><?=$x['c']?></td><td><?=money($x['n'])?></td></tr><?php endwhile;?></tbody></table></div></div></div><div class="col-12"><div class="card table-card"><div class="card-body"><h5 class="fw-bold">Attendance summary - August 2026</h5><div class="table-responsive"><table class="table"><thead><tr><th>Employee</th><th>Days</th><th>Present</th><th>Half day</th><th>Absent</th><th>Attendance</th></tr></thead><tbody><?php $r=$conn->query("SELECT e.employee_code,e.first_name,e.last_name,COUNT(a.attendance_date)w,SUM(a.attendance_status='PRESENT')p,SUM(a.attendance_status='HALF_DAY')h,SUM(a.attendance_status='ABSENT')ab,ROUND(100*SUM(CASE a.attendance_status WHEN 'PRESENT' THEN 1 WHEN 'HALF_DAY' THEN .5 ELSE 0 END)/COUNT(*),1)pct FROM employee e JOIN attendance a ON a.employee_id=e.employee_id WHERE a.attendance_date BETWEEN '2026-08-01' AND '2026-08-31' GROUP BY e.employee_id");while($x=$r->fetch_assoc()):?><tr><td><?=e($x['employee_code'].' - '.$x['first_name'].' '.$x['last_name'])?></td><td><?=$x['w']?></td><td><?=$x['p']?></td><td><?=$x['h']?></td><td><?=$x['ab']?></td><td><?=$x['pct']?>%</td></tr><?php endwhile;?></tbody></table></div></div></div></div><?php page_bottom();exit;}
-if($page==='employee_dashboard'){$id=(int)user()['employee_id'];$p=$conn->query("SELECT * FROM payslip WHERE employee_id=$id ORDER BY pay_month DESC LIMIT 1")->fetch_assoc();$pct=scalar($conn,"SELECT ROUND(100*SUM(CASE attendance_status WHEN 'PRESENT' THEN 1 WHEN 'HALF_DAY' THEN .5 ELSE 0 END)/COUNT(*),1) FROM attendance WHERE employee_id=$id AND attendance_date BETWEEN '2026-08-01' AND '2026-08-31'");page_top('My Dashboard');section_title('Welcome, '.user()['first_name'],'Your personal employment and payroll overview.');?><div class="row g-3 mb-4"><?php foreach([['August attendance',($pct?:0).'%','bi-calendar-check','primary'],['Pending leave requests',scalar($conn,"SELECT COUNT(*) FROM leave_request WHERE employee_id=$id AND leave_status='PENDING'"),'bi-calendar2-week','warning'],['Latest net salary',money($p['net_salary']??0),'bi-wallet2','success']] as $c):?><div class="col-md-4"><div class="card metric border-<?=$c[3]?>"><div class="card-body"><div class="small text-secondary"><?=$c[0]?></div><div class="metric-value"><?=$c[1]?></div><i class="bi <?=$c[2]?> text-<?=$c[3]?>"></i></div></div></div><?php endforeach;?></div><div class="row g-4"><div class="col-lg-7"><div class="card"><div class="card-body"><h5 class="fw-bold">Latest payslip</h5><?php if($p):?><p class="text-secondary"><?=date('F Y',strtotime($p['pay_month']))?></p><div class="row"><div class="col"><small>Gross</small><div class="fw-bold"><?=money($p['gross_salary'])?></div></div><div class="col"><small>Deductions</small><div class="fw-bold"><?=money($p['total_deduction'])?></div></div><div class="col"><small>Net salary</small><div class="fw-bold text-success"><?=money($p['net_salary'])?></div></div></div><?php else:?><p>No payslip available.</p><?php endif;?></div></div></div><div class="col-lg-5"><a class="quick-link mb-3" href="index.php?page=my_leaves"><i class="bi bi-calendar-plus me-2"></i>Apply for leave</a><a class="quick-link" href="index.php?page=my_payslips"><i class="bi bi-receipt me-2"></i>View my payslips</a></div></div><?php page_bottom();exit;}
-if($page==='profile'){$id=(int)user()['employee_id'];$x=$conn->query("SELECT e.*,d.department_name,ds.designation_name FROM employee e JOIN department d ON d.department_id=e.department_id JOIN designation ds ON ds.designation_id=e.designation_id WHERE e.employee_id=$id")->fetch_assoc();page_top('My Profile');section_title('My Profile','Your employment information.');?><div class="card"><div class="card-body p-4"><h3><?=e($x['first_name'].' '.$x['last_name'])?></h3><p class="text-secondary"><?=e($x['designation_name'])?> &middot; <?=e($x['department_name'])?></p><dl class="row mb-0"><dt class="col-sm-3">Employee code</dt><dd class="col-sm-9"><?=e($x['employee_code'])?></dd><dt class="col-sm-3">Email</dt><dd class="col-sm-9"><?=e($x['email'])?></dd><dt class="col-sm-3">Phone</dt><dd class="col-sm-9"><?=e($x['phone'])?></dd><dt class="col-sm-3">Join date</dt><dd class="col-sm-9"><?=e($x['join_date'])?></dd></dl></div></div><?php page_bottom();exit;}
-if($page==='my_attendance'){$id=(int)user()['employee_id'];page_top('My Attendance');section_title('My Attendance','Your daily attendance records.');$r=$conn->query("SELECT * FROM attendance WHERE employee_id=$id ORDER BY attendance_date DESC");?><div class="card table-card"><div class="card-body"><table class="table"><thead><tr><th>Date</th><th>Status</th><th>Check-in</th><th>Check-out</th></tr></thead><tbody><?php while($x=$r->fetch_assoc()):?><tr><td><?=e($x['attendance_date'])?></td><td><?=badge($x['attendance_status'])?></td><td><?=e($x['check_in']??'—')?></td><td><?=e($x['check_out']??'—')?></td></tr><?php endwhile;?></tbody></table></div></div><?php page_bottom();exit;}
-if($page==='my_leaves'){$id=(int)user()['employee_id'];page_top('My Leave Requests');section_title('Leave Requests','Submit, track, or cancel pending requests.');?><div class="card mb-4"><div class="card-body"><form method="post" class="row g-3"><input type="hidden" name="action" value="leave_submit"><div class="col-md-3"><label class="form-label">Leave type</label><select name="type" class="form-select"><option>CASUAL</option><option>SICK</option><option>EARNED</option><option>UNPAID</option><option>OTHER</option></select></div><div class="col-md-3"><label class="form-label">Start date</label><input type="date" name="start" class="form-control" required></div><div class="col-md-3"><label class="form-label">End date</label><input type="date" name="end" class="form-control" required></div><div class="col-md-3"><label class="form-label">Reason</label><input name="reason" class="form-control" required></div><div class="col-12"><button class="btn btn-primary">Submit request</button></div></form></div></div><div class="card table-card"><div class="card-body"><table class="table align-middle"><thead><tr><th>Type</th><th>Period</th><th>Reason</th><th>Status</th><th></th></tr></thead><tbody><?php $r=$conn->query("SELECT * FROM leave_request WHERE employee_id=$id ORDER BY applied_on DESC");while($x=$r->fetch_assoc()):?><tr><td><?=badge($x['leave_type'])?></td><td><?=e($x['start_date'])?> to <?=e($x['end_date'])?></td><td><?=e($x['reason'])?></td><td><?=badge($x['leave_status'])?></td><td><?php if($x['leave_status']==='PENDING'):?><form method="post"><input type="hidden" name="action" value="leave_cancel"><input type="hidden" name="leave_id" value="<?=$x['leave_id']?>"><button class="btn btn-sm btn-outline-secondary">Cancel</button></form><?php endif;?></td></tr><?php endwhile;?></tbody></table></div></div><?php page_bottom();exit;}
-if($page==='my_payslips'){$id=(int)user()['employee_id'];page_top('My Payslips');section_title('My Payslips','Monthly payroll records calculated from attendance.');$r=$conn->query("SELECT * FROM payslip WHERE employee_id=$id ORDER BY pay_month DESC");?><div class="card table-card"><div class="card-body"><button class="btn btn-sm btn-outline-secondary float-end no-print" onclick="print()"><i class="bi bi-printer"></i> Print</button><table class="table"><thead><tr><th>Month</th><th>Working / paid days</th><th>Gross</th><th>Deductions</th><th>Net salary</th></tr></thead><tbody><?php while($x=$r->fetch_assoc()):?><tr><td><?=date('F Y',strtotime($x['pay_month']))?></td><td><?=$x['working_days']?> / <?=$x['paid_days']?></td><td><?=money($x['gross_salary'])?></td><td><?=money($x['total_deduction'])?></td><td class="fw-bold text-success"><?=money($x['net_salary'])?></td></tr><?php endwhile;?></tbody></table></div></div><?php page_bottom();exit;}
+</tr><?php
+endwhile;?></tbody>
+</table>
+</div>
+</div>
+</div><?php
+page_bottom();
+exit;
+}
+if($page==='reports'){
+    page_top('Reports');
+    section_title('Payroll Reports', 'Reports created with joins, GROUP BY and aggregate functions.');?><div class="row g-4">
+<div class="col-lg-6">
+<div class="card">
+<div class="card-body">
+<h5 class="fw-bold">Department-wise employee count</h5>
+<table class="table mb-0">
+<thead>
+<tr>
+<th>Department</th>
+<th>Employees</th>
+</tr>
+</thead>
+<tbody><?php
+$r=$conn->query('SELECT d.department_name,COUNT(e.employee_id)c FROM department d LEFT JOIN employee e ON e.department_id=d.department_id GROUP BY d.department_id');
+while($x=$r->fetch_assoc()):?><tr>
+<td><?=e($x['department_name'])?></td>
+<td><?=$x['c']?></td>
+</tr><?php
+endwhile;?></tbody>
+</table>
+</div>
+</div>
+</div>
+<div class="col-lg-6">
+<div class="card">
+<div class="card-body">
+<h5 class="fw-bold">Department-wise August payroll</h5>
+<table class="table mb-0">
+<thead>
+<tr>
+<th>Department</th>
+<th>Payslips</th>
+<th>Net payroll</th>
+</tr>
+</thead>
+<tbody><?php
+$r=$conn->query("SELECT d.department_name,COUNT(p.payslip_id)c,SUM(p.net_salary)n FROM payslip p JOIN employee e ON e.employee_id=p.employee_id JOIN department d ON d.department_id=e.department_id WHERE p.pay_month='2026-08-01' GROUP BY d.department_id");
+while($x=$r->fetch_assoc()):?><tr>
+<td><?=e($x['department_name'])?></td>
+<td><?=$x['c']?></td>
+<td><?=money($x['n'])?></td>
+</tr><?php
+endwhile;?></tbody>
+</table>
+</div>
+</div>
+</div>
+<div class="col-12">
+<div class="card table-card">
+<div class="card-body">
+<h5 class="fw-bold">Attendance summary - August 2026</h5>
+<div class="table-responsive">
+<table class="table">
+<thead>
+<tr>
+<th>Employee</th>
+<th>Days</th>
+<th>Present</th>
+<th>Half day</th>
+<th>Absent</th>
+<th>Attendance</th>
+</tr>
+</thead>
+<tbody><?php
+$r=$conn->query("SELECT e.employee_code,e.first_name,e.last_name,COUNT(a.attendance_date)w,SUM(a.attendance_status='PRESENT')p,SUM(a.attendance_status='HALF_DAY')h,SUM(a.attendance_status='ABSENT')ab,ROUND(100*SUM(CASE a.attendance_status WHEN 'PRESENT' THEN 1 WHEN 'HALF_DAY' THEN .5 ELSE 0 END)/COUNT(*),1)pct FROM employee e JOIN attendance a ON a.employee_id=e.employee_id WHERE a.attendance_date BETWEEN '2026-08-01' AND '2026-08-31' GROUP BY e.employee_id");
+while($x=$r->fetch_assoc()):?><tr>
+<td><?=e($x['employee_code'].' - '.$x['first_name'].' '.$x['last_name'])?></td>
+<td><?=$x['w']?></td>
+<td><?=$x['p']?></td>
+<td><?=$x['h']?></td>
+<td><?=$x['ab']?></td>
+<td><?=$x['pct']?>%</td>
+</tr><?php
+endwhile;?></tbody>
+</table>
+</div>
+</div>
+</div>
+</div><?php
+page_bottom();
+exit;
+}
+if($page==='employee_dashboard'){
+    $id=(int)user()['employee_id'];
+    $p=$conn->query("SELECT * FROM payslip WHERE employee_id=$id ORDER BY pay_month DESC LIMIT 1")->fetch_assoc();
+    $pct=scalar($conn, "SELECT ROUND(100*SUM(CASE attendance_status WHEN 'PRESENT' THEN 1 WHEN 'HALF_DAY' THEN .5 ELSE 0 END)/COUNT(*),1) FROM attendance WHERE employee_id=$id AND attendance_date BETWEEN '2026-08-01' AND '2026-08-31'");
+    page_top('My Dashboard');
+    section_title('Welcome, '.user()['first_name'], 'Your personal employment and payroll overview.');?><div class="row g-3 mb-4"><?php
+foreach([['August attendance', ($pct?:0).'%', 'bi-calendar-check', 'primary'], ['Pending leave requests', scalar($conn, "SELECT COUNT(*) FROM leave_request WHERE employee_id=$id AND leave_status='PENDING'"), 'bi-calendar2-week', 'warning'], ['Latest net salary', money($p['net_salary']??0), 'bi-wallet2', 'success']] as $c):?><div class="col-md-4">
+<div class="card metric border-<?=$c[3]?>">
+<div class="card-body">
+<div class="small text-secondary"><?=$c[0]?></div>
+<div class="metric-value"><?=$c[1]?></div>
+<i class="bi <?=$c[2]?> text-<?=$c[3]?>">
+</i>
+</div>
+</div>
+</div><?php
+endforeach;?></div>
+<div class="row g-4">
+<div class="col-lg-7">
+<div class="card">
+<div class="card-body">
+<h5 class="fw-bold">Latest payslip</h5><?php
+if($p):?><p class="text-secondary"><?=date('F Y',strtotime($p['pay_month']))?></p>
+<div class="row">
+<div class="col">
+<small>Gross</small>
+<div class="fw-bold"><?=money($p['gross_salary'])?></div>
+</div>
+<div class="col">
+<small>Deductions</small>
+<div class="fw-bold"><?=money($p['total_deduction'])?></div>
+</div>
+<div class="col">
+<small>Net salary</small>
+<div class="fw-bold text-success"><?=money($p['net_salary'])?></div>
+</div>
+</div><?php
+else:?><p>No payslip available.</p><?php
+endif;?></div>
+</div>
+</div>
+<div class="col-lg-5">
+<a class="quick-link mb-3" href="index.php?page=my_leaves">
+<i class="bi bi-calendar-plus me-2">
+</i>Apply for leave</a>
+<a class="quick-link" href="index.php?page=my_payslips">
+<i class="bi bi-receipt me-2">
+</i>View my payslips</a>
+</div>
+</div><?php
+page_bottom();
+exit;
+}
+if($page==='profile'){
+    $id=(int)user()['employee_id'];
+    $x=$conn->query("SELECT e.*,d.department_name,ds.designation_name FROM employee e JOIN department d ON d.department_id=e.department_id JOIN designation ds ON ds.designation_id=e.designation_id WHERE e.employee_id=$id")->fetch_assoc();
+    page_top('My Profile');
+    section_title('My Profile', 'Your employment information.');?><div class="card">
+<div class="card-body p-4">
+<h3><?=e($x['first_name'].' '.$x['last_name'])?></h3>
+<p class="text-secondary"><?=e($x['designation_name'])?>&middot;<?=e($x['department_name'])?></p>
+<dl class="row mb-0">
+<dt class="col-sm-3">Employee code</dt>
+<dd class="col-sm-9"><?=e($x['employee_code'])?></dd>
+<dt class="col-sm-3">Email</dt>
+<dd class="col-sm-9"><?=e($x['email'])?></dd>
+<dt class="col-sm-3">Phone</dt>
+<dd class="col-sm-9"><?=e($x['phone'])?></dd>
+<dt class="col-sm-3">Join date</dt>
+<dd class="col-sm-9"><?=e($x['join_date'])?></dd>
+</dl>
+</div>
+</div><?php
+page_bottom();
+exit;
+}
+if($page==='my_attendance'){
+    $id=(int)user()['employee_id'];
+    page_top('My Attendance');
+    section_title('My Attendance', 'Your daily attendance records.');
+    $r=$conn->query("SELECT * FROM attendance WHERE employee_id=$id ORDER BY attendance_date DESC");?><div class="card table-card">
+<div class="card-body">
+<table class="table">
+<thead>
+<tr>
+<th>Date</th>
+<th>Status</th>
+<th>Check-in</th>
+<th>Check-out</th>
+</tr>
+</thead>
+<tbody><?php
+while($x=$r->fetch_assoc()):?><tr>
+<td><?=e($x['attendance_date'])?></td>
+<td><?=badge($x['attendance_status'])?></td>
+<td><?=e($x['check_in']??'—')?></td>
+<td><?=e($x['check_out']??'—')?></td>
+</tr><?php
+endwhile;?></tbody>
+</table>
+</div>
+</div><?php
+page_bottom();
+exit;
+}
+if($page==='my_leaves'){
+    $id=(int)user()['employee_id'];
+    page_top('My Leave Requests');
+    section_title('Leave Requests', 'Submit, track, or cancel pending requests.');?><div class="card mb-4">
+<div class="card-body">
+<form method="post" class="row g-3">
+<input type="hidden" name="action" value="leave_submit">
+<div class="col-md-3">
+<label class="form-label">Leave type</label>
+<select name="type" class="form-select">
+<option>CASUAL</option>
+<option>SICK</option>
+<option>EARNED</option>
+<option>UNPAID</option>
+<option>OTHER</option>
+</select>
+</div>
+<div class="col-md-3">
+<label class="form-label">Start date</label>
+<input type="date" name="start" class="form-control" required>
+</div>
+<div class="col-md-3">
+<label class="form-label">End date</label>
+<input type="date" name="end" class="form-control" required>
+</div>
+<div class="col-md-3">
+<label class="form-label">Reason</label>
+<input name="reason" class="form-control" required>
+</div>
+<div class="col-12">
+<button class="btn btn-primary">Submit request</button>
+</div>
+</form>
+</div>
+</div>
+<div class="card table-card">
+<div class="card-body">
+<table class="table align-middle">
+<thead>
+<tr>
+<th>Type</th>
+<th>Period</th>
+<th>Reason</th>
+<th>Status</th>
+<th>
+</th>
+</tr>
+</thead>
+<tbody><?php
+$r=$conn->query("SELECT * FROM leave_request WHERE employee_id=$id ORDER BY applied_on DESC");
+while($x=$r->fetch_assoc()):?><tr>
+<td><?=badge($x['leave_type'])?></td>
+<td><?=e($x['start_date'])?> to <?=e($x['end_date'])?></td>
+<td><?=e($x['reason'])?></td>
+<td><?=badge($x['leave_status'])?></td>
+<td><?php
+if($x['leave_status']==='PENDING'):?><form method="post">
+<input type="hidden" name="action" value="leave_cancel">
+<input type="hidden" name="leave_id" value="<?=$x['leave_id']?>">
+<button class="btn btn-sm btn-outline-secondary">Cancel</button>
+</form><?php
+endif;?></td>
+</tr><?php
+endwhile;?></tbody>
+</table>
+</div>
+</div><?php
+page_bottom();
+exit;
+}
+if($page==='my_payslips'){
+    $id=(int)user()['employee_id'];
+    page_top('My Payslips');
+    section_title('My Payslips', 'Monthly payroll records calculated from attendance.');
+    $r=$conn->query("SELECT * FROM payslip WHERE employee_id=$id ORDER BY pay_month DESC");?><div class="card table-card">
+<div class="card-body">
+<button class="btn btn-sm btn-outline-secondary float-end no-print" onclick="print()">
+<i class="bi bi-printer">
+</i> Print</button>
+<table class="table">
+<thead>
+<tr>
+<th>Month</th>
+<th>Working / paid days</th>
+<th>Gross</th>
+<th>Deductions</th>
+<th>Net salary</th>
+</tr>
+</thead>
+<tbody><?php
+while($x=$r->fetch_assoc()):?><tr>
+<td><?=date('F Y',strtotime($x['pay_month']))?></td>
+<td><?=$x['working_days']?>/<?=$x['paid_days']?></td>
+<td><?=money($x['gross_salary'])?></td>
+<td><?=money($x['total_deduction'])?></td>
+<td class="fw-bold text-success"><?=money($x['net_salary'])?></td>
+</tr><?php
+endwhile;?></tbody>
+</table>
+</div>
+</div><?php
+page_bottom();
+exit;
+}
 header('Location:index.php?page='.(is_admin()?'dashboard':'employee_dashboard'));
